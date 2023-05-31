@@ -503,6 +503,9 @@ process_pagefault(vmi_instance_t vmi, struct kvmi_dom_event *kvmi_event)
             rpl.common.event = kvmi_event->event.common.event;
             rpl.common.action = KVMI_EVENT_ACTION_CONTINUE;
 
+            if (libvmi_event->mem_event.retry)
+                rpl.common.action = KVMI_EVENT_ACTION_RETRY;
+
             return process_cb_response(vmi, response, libvmi_event, kvmi_event, &rpl, sizeof(rpl));
         }
     }
@@ -540,6 +543,9 @@ process_pagefault(vmi_instance_t vmi, struct kvmi_dom_event *kvmi_event)
                 rpl.hdr.vcpu = kvmi_event->event.common.vcpu;
                 rpl.common.event = kvmi_event->event.common.event;
                 rpl.common.action = KVMI_EVENT_ACTION_CONTINUE;
+
+                if (libvmi_event->mem_event.retry)
+                    rpl.common.action = KVMI_EVENT_ACTION_RETRY;
 
                 if (VMI_FAILURE ==
                         process_cb_response(vmi, response, libvmi_event, kvmi_event, &rpl, sizeof(rpl)))

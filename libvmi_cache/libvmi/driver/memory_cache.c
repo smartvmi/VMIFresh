@@ -168,7 +168,11 @@ static memory_cache_entry_t create_new_entry (vmi_instance_t vmi, addr_t paddr,
     entry->data = get_memory_data(vmi, paddr, length);
 
     if (vmi->init_flags & VMI_INIT_EVENTS)
+    {
+        if (!vmi->in_event && vmi_are_events_pending(vmi))
+            vmi_events_listen(vmi, 0);
         vmi_set_mem_event(vmi, paddr >> vmi->page_shift, VMI_MEMACCESS_W, 0);
+    }
 
     return entry;
 
@@ -195,6 +199,8 @@ static event_response_t memory_cache_event(vmi_instance_t vmi, vmi_event_t* even
     free &= pid_event(vmi, event);
     free &= v2p_event(vmi, event);
 
+    // might fault again if we stalled on the events.
+    event->mem_event.retry = free;
     if (free)
         vmi_set_mem_event(vmi, event->mem_event.gfn, VMI_MEMACCESS_N, 0);
 

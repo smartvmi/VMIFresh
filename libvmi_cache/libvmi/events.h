@@ -280,6 +280,7 @@ typedef struct {
      */
     addr_t offset;
 
+    int8_t retry;
 } mem_access_event_t;
 
 typedef struct {
