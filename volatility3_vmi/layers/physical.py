@@ -1,12 +1,16 @@
 # This file is Copyright 2019 Volatility Foundation and licensed under the Volatility Software License 1.0
 # which is available at https://www.volatilityfoundation.org/license/vsl-v1.0
 #
+import logging
 import threading
+from urllib.parse import urlsplit
 from typing import Any, Dict, IO, List, Optional, Union
 
-from volatility3.framework import exceptions, interfaces, constants
+from volatility3.framework import constants, exceptions, interfaces
 from volatility3.framework.configuration import requirements
 from volatility3.framework.layers import resources
+
+vollog = logging.getLogger(__name__)
 
 libvmi = None
 try:
@@ -19,13 +23,17 @@ class BufferDataLayer(interfaces.layers.DataLayerInterface):
     """A DataLayer class backed by a buffer in memory, designed for testing and
     swift data access."""
 
-    def __init__(self,
-                 context: interfaces.context.ContextInterface,
-                 config_path: str,
-                 name: str,
-                 buffer: bytes,
-                 metadata: Optional[Dict[str, Any]] = None) -> None:
-        super().__init__(context = context, config_path = config_path, name = name, metadata = metadata)
+    def __init__(
+        self,
+        context: interfaces.context.ContextInterface,
+        config_path: str,
+        name: str,
+        buffer: bytes,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(
+            context=context, config_path=config_path, name=name, metadata=metadata
+        )
         self._buffer = buffer
 
     @property
@@ -40,8 +48,10 @@ class BufferDataLayer(interfaces.layers.DataLayerInterface):
 
     def is_valid(self, offset: int, length: int = 1) -> bool:
         """Returns whether the offset is valid or not."""
-        return bool(self.minimum_address <= offset <= self.maximum_address
-                    and self.minimum_address <= offset + length - 1 <= self.maximum_address)
+        return bool(
+            self.minimum_address <= offset <= self.maximum_address
+            and self.minimum_address <= offset + length - 1 <= self.maximum_address
+        )
 
     def read(self, address: int, length: int, pad: bool = False) -> bytes:
         """Reads the data from the buffer."""
@@ -49,26 +59,30 @@ class BufferDataLayer(interfaces.layers.DataLayerInterface):
             invalid_address = address
             if self.minimum_address < address <= self.maximum_address:
                 invalid_address = self.maximum_address + 1
-            raise exceptions.InvalidAddressException(self.name, invalid_address,
-                                                     "Offset outside of the buffer boundaries")
-        return self._buffer[address:address + length]
+            raise exceptions.InvalidAddressException(
+                self.name, invalid_address, "Offset outside of the buffer boundaries"
+            )
+        return self._buffer[address : address + length]
 
     def write(self, address: int, data: bytes):
         """Writes the data from to the buffer."""
-        self._buffer = self._buffer[:address] + data + self._buffer[address + len(data):]
+        self._buffer = (
+            self._buffer[:address] + data + self._buffer[address + len(data) :]
+        )
 
     @classmethod
     def get_requirements(cls) -> List[interfaces.configuration.RequirementInterface]:
         # No real requirements (only the buffer).  Need to figure out if there's a better way of representing this
         return [
-            requirements.BytesRequirement(name = 'buffer',
-                                          description = "The direct bytes to interact with",
-                                          optional = False)
+            requirements.BytesRequirement(
+                name="buffer",
+                description="The direct bytes to interact with",
+                optional=False,
+            )
         ]
 
 
 class DummyLock:
-
     def __enter__(self) -> None:
         pass
 
@@ -79,19 +93,25 @@ class DummyLock:
 class FileLayer(interfaces.layers.DataLayerInterface):
     """a DataLayer backed by a file on the filesystem."""
 
-    def __init__(self,
-                 context: interfaces.context.ContextInterface,
-                 config_path: str,
-                 name: str,
-                 metadata: Optional[Dict[str, Any]] = None) -> None:
-        super().__init__(context = context, config_path = config_path, name = name, metadata = metadata)
+    def __init__(
+        self,
+        context: interfaces.context.ContextInterface,
+        config_path: str,
+        name: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(
+            context=context, config_path=config_path, name=name, metadata=metadata
+        )
 
+        self._write_warning = False
         self._location = self.config["location"]
         self._accessor = resources.ResourceAccessor()
-        self._file_ = None  # type: Optional[IO[Any]]
-        self._size = None  # type: Optional[int]
+        self._file_: Optional[IO[Any]] = None
+        self._size: Optional[int] = None
+        self._maximum_address: Optional[int] = None
         # Construct the lock now (shared if made before threading) in case we ever need it
-        self._lock = DummyLock()  # type: Union[DummyLock, threading.Lock]
+        self._lock: Union[DummyLock, threading.Lock] = DummyLock()
         if constants.PARALLELISM == constants.Parallelism.Threading:
             self._lock = threading.Lock()
         # Instantiate the file to throw exceptions if the file doesn't open
@@ -115,14 +135,15 @@ class FileLayer(interfaces.layers.DataLayerInterface):
     def maximum_address(self) -> int:
         """Returns the largest available address in the space."""
         # Zero based, so we return the size of the file minus 1
-        if self._size:
-            return self._size
+        if self._maximum_address:
+            return self._maximum_address
         with self._lock:
             orig = self._file.tell()
             self._file.seek(0, 2)
             self._size = self._file.tell()
             self._file.seek(orig)
-        return self._size
+            self._maximum_address = self._size - 1
+        return self._maximum_address
 
     @property
     def minimum_address(self) -> int:
@@ -133,8 +154,10 @@ class FileLayer(interfaces.layers.DataLayerInterface):
         """Returns whether the offset is valid or not."""
         if length <= 0:
             raise ValueError("Length must be positive")
-        return bool(self.minimum_address <= offset <= self.maximum_address
-                    and self.minimum_address <= offset + length - 1 <= self.maximum_address)
+        return bool(
+            self.minimum_address <= offset <= self.maximum_address
+            and self.minimum_address <= offset + length - 1 <= self.maximum_address
+        )
 
     def read(self, offset: int, length: int, pad: bool = False) -> bytes:
         """Reads from the file at offset for length."""
@@ -142,8 +165,9 @@ class FileLayer(interfaces.layers.DataLayerInterface):
             invalid_address = offset
             if self.minimum_address < offset <= self.maximum_address:
                 invalid_address = self.maximum_address + 1
-            raise exceptions.InvalidAddressException(self.name, invalid_address,
-                                                     "Offset outside of the buffer boundaries")
+            raise exceptions.InvalidAddressException(
+                self.name, invalid_address, "Offset outside of the buffer boundaries"
+            )
 
         # TODO: implement locking for multi-threading
         with self._lock:
@@ -152,10 +176,13 @@ class FileLayer(interfaces.layers.DataLayerInterface):
 
         if len(data) < length:
             if pad:
-                data += (b"\x00" * (length - len(data)))
+                data += b"\x00" * (length - len(data))
             else:
                 raise exceptions.InvalidAddressException(
-                    self.name, offset + len(data), "Could not read sufficient bytes from the " + self.name + " file")
+                    self.name,
+                    offset + len(data),
+                    "Could not read sufficient bytes from the " + self.name + " file",
+                )
         return data
 
     def write(self, offset: int, data: bytes) -> None:
@@ -163,12 +190,20 @@ class FileLayer(interfaces.layers.DataLayerInterface):
 
         This will technically allow writes beyond the extent of the file
         """
+        if not self._file.writable():
+            if not self._write_warning:
+                self._write_warning = True
+                vollog.warning(f"Try to write to unwritable layer: {self.name}")
+            return None
         if not self.is_valid(offset, len(data)):
             invalid_address = offset
             if self.minimum_address < offset <= self.maximum_address:
                 invalid_address = self.maximum_address + 1
-            raise exceptions.InvalidAddressException(self.name, invalid_address,
-                                                     "Data segment outside of the " + self.name + " file boundaries")
+            raise exceptions.InvalidAddressException(
+                self.name,
+                invalid_address,
+                "Data segment outside of the " + self.name + " file boundaries",
+            )
         with self._lock:
             self._file.seek(offset)
             self._file.write(data)
@@ -186,9 +221,12 @@ class FileLayer(interfaces.layers.DataLayerInterface):
         """Closes the file handle."""
         self._file.close()
 
+    def __exit__(self, type, value, traceback) -> None:
+        self.destroy()
+
     @classmethod
     def get_requirements(cls) -> List[interfaces.configuration.RequirementInterface]:
-        return [requirements.StringRequirement(name = 'location', optional = False)]
+        return [requirements.StringRequirement(name="location", optional=False)]
 
 vmi_instance = None
 vmi_ref = 0
@@ -208,11 +246,11 @@ class VMILayer(interfaces.layers.DataLayerInterface):
             vmi_ref += 1
             return
 
-        domain = self.config["location"]
-        if self.config["location"].startswith("file:"):
-            domain = self.config["location"][len("file:/tmp/"):]
-            domain = domain[:domain.find("/")]
-        init = { VMIInitData.KVMI_SOCKET: self.config["location"][len("file:"):] }
+        domain = urlsplit(self.config["location"])
+        sock = domain.path
+        domain = sock.split('/')[2]
+        vollog.info(f"VMI socket: {sock}, domain={domain}")
+        init = { VMIInitData.KVMI_SOCKET: sock }
         self.vmi = vmi_instance = Libvmi(domain, init_flags=libvmi.INIT_DOMAINNAME | libvmi.INIT_EVENTS,
                 init_data=init, partial=False)
         vmi_ref += 1
