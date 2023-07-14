@@ -1,0 +1,16 @@
+rule TestA
+{
+	strings:
+		$hex_string = { FA FA FA FA FA FA FA FA FA FA FA FA FA FA FA FA FA FA FA FA }
+
+	condition:
+		$hex_string
+}
+rule TestB
+{
+	strings:
+		$hex_string = { 55 55 55 55 55 55 55 55 55 55 55 55 55 55 55 55 55 55 55 55 }
+
+	condition:
+		$hex_string
+}

@@ -7,6 +7,7 @@ import functools
 import logging
 import math
 import struct
+import types
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from volatility3 import classproperty
@@ -14,10 +15,13 @@ from volatility3.framework import exceptions, interfaces, constants
 from volatility3.framework.configuration import requirements
 from volatility3.framework.layers import linear
 
+import traceback
+
 libvmi = None
 try:
     import libvmi
     from libvmi import LibvmiError
+    from _libvmi import ffi, lib
 except ImportError:
     pass
 
@@ -78,15 +82,19 @@ class IntelVMI(linear.LinearlyMappedLayer):
         # we are stacked on top of the VMILayer, so grab the instance here!
         vmi = self._context.layers[self._base_layer].vmi
 
+        # optimized pagetable lookup
+        def pagetable_lookup(self, dtb, vaddr):
+            paddr = ffi.new("addr_t *")
+            status = lib.vmi_pagetable_lookup(self.vmi, dtb, vaddr, paddr)
+            return paddr[0]
+
         if length == 0:
             try:
-                mapped_offset, layer_name = vmi.pagetable_lookup(self._page_map_offset, offset), self._base_layer
-                if not self._context.layers[layer_name].is_valid(mapped_offset):
-                    raise exceptions.InvalidAddressException(layer_name = layer_name, invalid_address = mapped_offset)
-            except Libexceptions.InvalidAddressException:
-                if not ignore_errors:
-                    raise
-                return
+                mapped_offset, layer_name = pagetable_lookup(vmi, self._page_map_offset, offset), self._base_layer
+                if mapped_offset == 0:
+                    if not ignore_errors:
+                        raise exceptions.InvalidAddressException(layer_name = layer_name, invalid_address = mapped_offset)
+                    return
             except LibvmiError:
                 if not ignore_errors:
                     raise exceptions.InvalidAddressException(layer_name = self._base_layer, invalid_address = offset)
@@ -95,21 +103,26 @@ class IntelVMI(linear.LinearlyMappedLayer):
             return
         while length > 0:
             try:
-                chunk_offset, layer_name = vmi.pagetable_lookup(self._page_map_offset, offset), self._base_layer
+                chunk_offset, layer_name = pagetable_lookup(vmi, self._page_map_offset, offset), self._base_layer
                 chunk_size = min((1 << 12) - (chunk_offset % (1 << 12)), length)
-                if not self._context.layers[layer_name].is_valid(chunk_offset, chunk_size):
-                    raise exceptions.InvalidAddressException(layer_name = layer_name, invalid_address = chunk_offset)
-            except (LibvmiError, exceptions.InvalidAddressException) as excp:
+                if chunk_offset == 0:
+                    if not ignore_errors:
+                        raise exceptions.InvalidAddressException(layer_name = layer_name, invalid_address = chunk_offset)
+                    mask = (1 << 12) - 1
+                    length_diff = (mask + 1 - (offset & mask))
+                    length -= length_diff
+                    offset += length_diff
+                else:
+                    yield offset, chunk_size, chunk_offset, chunk_size, layer_name
+                    length -= chunk_size
+                    offset += chunk_size
+            except LibvmiError as excp:
                 if not ignore_errors:
                     raise exceptions.InvalidAddressException(layer_name = self._base_layer, invalid_address = offset)
                 mask = (1 << 12) - 1
                 length_diff = (mask + 1 - (offset & mask))
                 length -= length_diff
                 offset += length_diff
-            else:
-                yield offset, chunk_size, chunk_offset, chunk_size, layer_name
-                length -= chunk_size
-                offset += chunk_size
 
     @property
     def dependencies(self) -> List[str]:
@@ -126,4 +139,7 @@ class IntelVMI(linear.LinearlyMappedLayer):
             requirements.IntRequirement(name = 'kernel_virtual_offset', optional = True),
             requirements.StringRequirement(name = 'kernel_banner', optional = True)
         ]
+
+    def canonicalize(self, addr: int) -> int:
+        return addr & self.address_mask
 

@@ -253,12 +253,17 @@ class VMILayer(interfaces.layers.DataLayerInterface):
         init = { VMIInitData.KVMI_SOCKET: sock }
         self.vmi = vmi_instance = Libvmi(domain, init_flags=libvmi.INIT_DOMAINNAME | libvmi.INIT_EVENTS,
                 init_data=init, partial=False)
+        # cache this for now. technically incorrect since memory can be hotplugged.
+        self.max_addr = vmi_instance.get_memsize() - 1
         vmi_ref += 1
         
     @property
     def maximum_address(self) -> int:
         """Returns the largest available address in the space."""
-        return self.vmi.get_memsize() - 1
+        if hasattr(self, "max_addr"):
+            return self.max_addr
+        self.max_addr = self.vmi.get_memsize() - 1
+        return self.max_addr
 
     @property
     def minimum_address(self) -> int:
